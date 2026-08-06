@@ -49,7 +49,7 @@ const TAB_TITLES = {
 }
 
 /* ─────────────────────────────────────────
-   PARSER
+   PARSER  (Fixed regex escaping + smart risk)
    ───────────────────────────────────────── */
 function parseAnalysis(raw) {
   if (!raw || typeof raw !== 'string') return null
@@ -63,38 +63,83 @@ function parseAnalysis(raw) {
     document_type: 'Legal Document'
   }
 
-  const execMatch = raw.match(/\[EXECUTIVE_SUMMARY\]\s*\n?([\s\S]*?)(?=\n\s*\[CLAUSE_DETECTION\]|$)/i)
-  const clauseMatch = raw.match(/\[CLAUSE_DETECTION\]\s*\n?([\s\S]*?)(?=\n\s*\[CLAUSE_OBJECTIVES\]|$)/i)
-  const objMatch = raw.match(/\[CLAUSE_OBJECTIVES\]\s*\n?([\s\S]*?)$/i)
+  // Check if AI actually used our [TAG] format
+  const hasTags = /\[EXECUTIVE_SUMMARY\]/i.test(raw) || /\[CLAUSE_DETECTION\]/i.test(raw)
 
-  if (execMatch) result.summary = execMatch[1].trim()
-
-  if (clauseMatch) {
-    result.clauses = clauseMatch[1]
+  // If AI ignored the tags, dump everything into summary so user sees SOMETHING
+  if (!hasTags) {
+    const cleanText = raw.trim()
+    result.summary = cleanText
+    result.obligations = [cleanText]
+    result.compliance = cleanText
+    result.clauses = cleanText
       .split('\n')
       .map(l => l.trim())
-      .filter(l => l.startsWith('-') || l.startsWith('*'))
-      .map(l => l.replace(/^[-*]\s*/, '').trim())
+      .filter(l => l.startsWith('-') || l.startsWith('*') || /^\d+[.)]/.test(l))
+      .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter(l => l.length > 10)
+    return result
   }
 
-  if (objMatch) {
-    const text = objMatch[1].trim()
-    result.obligations = [text]
-    result.compliance = text
+  // Helper: grab content between [TAG] and the next [TAG]
+  const getSection = (tagName, nextTagNames = []) => {
+    const safeTag = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const endCheck = nextTagNames.length > 0
+      ? `(?=\\n\\s*\\[(?:${nextTagNames.join('|')})\\]|$)`
+      : `(?=\\n\\s*\\[|$)`
+    const regex = new RegExp(`\\[${safeTag}\\]\\s*\\n?([\\s\\S]*?)${endCheck}`, 'i')
+    const m = raw.match(regex)
+    return m ? m[1].trim() : ''
   }
 
-  const riskRe = /risk|liability|penalty|breach|violation|enforce|limitation|impact|forbid|prohibit|restrict/i
-  result.risks = result.clauses.filter(c => riskRe.test(c))
-  if (result.risks.length === 0 && result.clauses.length > 0) {
+  // 1. Summary
+  result.summary = getSection('EXECUTIVE_SUMMARY', ['CLAUSE_DETECTION'])
+
+  // 2. Clauses (stops before RISK_ASSESSMENT)
+  const clauseText = getSection('CLAUSE_DETECTION', ['RISK_ASSESSMENT', 'CLAUSE_OBJECTIVES'])
+  result.clauses = clauseText
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.startsWith('-') || l.startsWith('*') || /^\d+[.)]/.test(l))
+    .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
+    .filter(l => l.length > 0)
+
+  // 3. Risks (stops before CLAUSE_OBJECTIVES)
+  const riskText = getSection('RISK_ASSESSMENT', ['CLAUSE_OBJECTIVES', 'COMPLIANCE_STATUS'])
+
+  // First try bullet points
+  result.risks = riskText
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.startsWith('-') || l.startsWith('*') || /^\d+[.)]/.test(l))
+    .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
+    .filter(l => l.length > 0)
+
+  // If no bullets but text exists, split by newlines and keep real sentences
+  if (result.risks.length === 0 && riskText.length > 10) {
+    result.risks = riskText
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 10 && !l.startsWith('['))  // ignore stray headers
+  }
+
+  // Final fallback
+  if (result.risks.length === 0) {
     result.risks = ['Review the identified clauses for potential operational and legal risks.']
   }
+
+  // 4. Objectives (stops before COMPLIANCE_STATUS)
+  const objText = getSection('CLAUSE_OBJECTIVES', ['COMPLIANCE_STATUS'])
+  result.obligations = objText ? [objText] : ['No objectives identified.']
+
+  // 5. Compliance (goes to end of text)
+  result.compliance = getSection('COMPLIANCE_STATUS', [])
 
   return result
 }
 
 function normalizeSummary(res) {
   if (!res) return res
-  if (Array.isArray(res.clauses) && res.clauses.length > 0 && typeof res.clauses[0] !== 'string') return res
 
   const raw = res.raw_markdown || res.analysis || res.summary || res.content || ''
   const parsed = parseAnalysis(raw)

@@ -351,7 +351,7 @@ logger.info("Initializing System Components...")
 _embed_model = SentenceTransformer('all-MiniLM-L6-v2')
 _faiss_index = None
 _metadata    = None
-_cached_model = "llama3.2:1b"
+_cached_model = "qwen3:1.7b"
 
 def _load_index() -> bool:
     global _faiss_index, _metadata
@@ -445,91 +445,104 @@ def execute_search(query: str, top_k: int = 3) -> list:
 
 def execute_generation(query: str, results: list, file_excerpt: str = "") -> str:
     model = get_model_name()
-    if not results or len(results) == 0:
-        results = [{"section_number": "General", "content": "Indian Corporate Law guidelines."}]
-    primary_sec = results[0].get('section_number', 'General')
-    clean_text = file_excerpt.strip().replace('\n', ' ')
 
-    if "employment" in clean_text.lower():
-        exec_desc = (
-            "This document represents a legally binding Employment Agreement that establishes the long-term professional relationship "
-            "between the corporate organization and the hired specialist. The text outlines structural working guidelines, mandatory "
-            "code of conduct rules, and strict corporate data protection standards. Additionally, it details transparent payroll structures "
-            "subject to tax source deductions (TDS) and sets clear operational boundaries to protect internal infrastructure."
-        )
-        objectives_desc = (
-            "The primary objective of this agreement is to formalize day-to-day corporate operations, protect proprietary digital codes, "
-            "mitigate potential operational liabilities, and enforce statutory labor law compliance in accordance with Section 27 framework requirements."
-        )
-    elif "memorandum" in clean_text.lower() or "articles" in clean_text.lower():
-        exec_desc = (
-            "This document structures the primary constitutional framework and operational parameters of the corporate entity. "
-            "It defines the official boundaries of corporate execution, capitalization structures, and foundational internal governance rules. "
-            "The document establishes complete legal transparency regarding organizational objectives, director duties, and structural "
-            "accountability requirements under state oversight."
-        )
-        objectives_desc = (
-            "The foundational goal is to secure institutional transparency, outline clear executive powers, protect shareholder equity bounds, "
-            "and guarantee complete alignment with corporate governance standards."
-        )
+    # Build legal context from search results
+    context_parts = []
+    if results:
+        for r in results[:3]:
+            sec = r.get('section_number', 'General')
+            content = r.get('content', 'Indian Corporate Law guidelines.')
+            context_parts.append(f"Section {sec}: {content}")
     else:
-        clean_excerpt = file_excerpt.strip().replace('\n', ' ')
-        dynamic_summary = clean_excerpt[:250] + "..." if len(clean_excerpt) > 50 else "Standard corporate text parameters."
-        exec_desc = (
-            f"This document represents a custom legal record identified within the library workspace. "
-            f"Based on the extracted text parameters, the file handles: {dynamic_summary} "
-            f"The text outlines explicit compliance guidelines, baseline performance metrics, and operational terms "
-            f"binding both parties to institutional standards."
-        )
-        objectives_desc = (
-            f"The primary goal of this file is to establish safe operational parameters, enforce risk management boundaries, "
-            f"and maintain total structural transparency in accordance with Section {primary_sec} regulatory requirements."
-        )
+        context_parts.append("General Indian Corporate Law guidelines.")
+    context_text = "\n".join(context_parts)
 
-    clause_bullets = ""
-    if "non-compete" in clean_text.lower() or "compete" in clean_text.lower():
-        clause_bullets += (
-            "- **Restrictive Post-Termination Covenant (Non-Compete Clause):** Prohibits the employee from joining, advising, or "
-            "operating any competing AI-powered legal services platform for a strict duration of 12 months after leaving. This item "
-            "carries heavy operational impact and flags immediate risk parameters due to enforceability limitations under Section 27 of the Indian Contract Act, 1872.\n\n"
-        )
-    if "ip" in clean_text.lower() or "intellectual" in clean_text.lower() or "property" in clean_text.lower():
-        clause_bullets += (
-            "- **Intellectual Property & Asset Assignment Framework:** Establishes a complete 'Work for Hire' legal mechanism. This clause "
-            "dictates that any software code, proprietary AI model architecture, or software systems built during active employment "
-            "(such as data systems built for LegalBuddy) remain the sole, absolute property of the company entity, blocking any personal ownership claims.\n\n"
-        )
-    if "confidentiality" in clean_text.lower() or "disclosure" in clean_text.lower() or "secret" in clean_text.lower():
-        clause_bullets += (
-            "- **Proprietary Data Isolation Protocol (Confidentiality Clause):** Strictly forbids the transmission, duplication, or "
-            "unauthorized sharing of core business logic, background research paper data, or corporate client profiles with any third party. "
-            "This structural security layer maps communication monitoring protocols directly alongside the data protection guidelines of the Information Technology Act, 2000.\n\n"
-        )
-    if "remuneration" in clean_text.lower() or "salary" in clean_text.lower() or "compensation" in clean_text.lower():
-        clause_bullets += (
-            "- **Compensation Architecture & Statutory Benefits:** Outlines gross compensation processing limits subject to Tax Deductions at Source (TDS). "
-            "It guarantees structural corporate alignment with traditional Indian labor law guidelines, specifically managing the Employees' Provident Funds and Miscellaneous Provisions Act standards.\n\n"
-        )
+    # Truncate excerpt to avoid exceeding model context window
+    excerpt = file_excerpt.strip()
+    if len(excerpt) > 6000:
+        excerpt = excerpt[:6000] + "\n\n...[Document truncated due to length]..."
 
-    if len(clause_bullets.strip()) < 50:
-        clause_bullets = (
-            "- **Core Operational Performance Clause:** Details the extensive scope of daily professional responsibilities, execution benchmarks, "
-            "and continuous service requirements mandating full professional focus during the engagement window.\n\n"
-            "- **Information Technology Systems Compliance:** Mandates total personal alignment with internal corporate IT security guidelines, "
-            "granting administration teams clear audit rights over work-related systems data and communication logs to secure transparency.\n\n"
-            "- **Conflict Location & Governing Law Resolution:** Restricts the geographic path for legal dispute resolution to the exclusive jurisdiction "
-            "of the courts in New Delhi, mandating that all interpretations remain governed entirely under the laws of India.\n\n"
-        )
+    prompt = f"""You are LegalBuddy, an expert Indian corporate law AI assistant. Analyze the following legal document and provide a structured legal analysis.
 
-    answer = (
-        f"[EXECUTIVE_SUMMARY]\n"
-        f"{exec_desc}\n\n"
-        f"[CLAUSE_DETECTION]\n"
-        f"{clause_bullets.strip()}\n\n"
-        f"[CLAUSE_OBJECTIVES]\n"
-        f"{objectives_desc}"
-    )
-    return answer.strip()
+## Document Excerpt:
+{excerpt}
+
+## Relevant Legal Context from Companies Act, 2013:
+{context_text}
+
+## Task:
+Provide a comprehensive legal analysis using EXACTLY this structure and headers:
+
+[EXECUTIVE_SUMMARY]
+Write a concise 3-5 sentence summary. Identify what type of document this is (statute, contract, agreement, memorandum, articles of association, prospectus, etc.). Describe its purpose and scope accurately. DO NOT assume it is an employment agreement unless the text explicitly shows employment terms.
+
+[CLAUSE_DETECTION]
+If the document is a STATUTE (like the Companies Act, 2013), list the KEY CHAPTERS and important SECTIONS covered in the text. For each:
+- Chapter/Section name and number
+- What it governs in simple terms
+- Key provisions or requirements
+
+If the document is a CONTRACT or AGREEMENT, list the key clauses instead. For each:
+- Name the clause/section
+- Explain what it governs in simple terms
+- Note any risks, obligations, or penalties
+
+[RISK_ASSESSMENT]
+List the key legal risks, penalties, and consequences of non-compliance mentioned in the document. For each:
+- Name the risk or penalty
+- Relevant section or provision
+- Consequence (fine, imprisonment, disqualification, or operational impact)
+
+[CLAUSE_OBJECTIVES]
+Explain the primary objectives: Who does this protect? What compliance does it require? What is the intended legal outcome?
+
+[COMPLIANCE_STATUS]
+List the mandatory compliance requirements, filings, and obligations from the document. For each:
+- Compliance requirement
+- Who it applies to
+- Frequency, deadline, or condition if mentioned
+
+Keep the tone professional, factual, and grounded in Indian corporate law. Do not invent information not present in the text. Use clear markdown bullet points for every list.
+"""
+
+    try:
+        logger.info(f"Calling Ollama model '{model}' for document generation...")
+        response = ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.2, "num_predict": 2048}
+        )
+        analysis = response.get("message", {}).get("content", "").strip()
+        if not analysis:
+            raise ValueError("Empty response from Ollama model")
+        logger.info(f"Ollama response received: {len(analysis)} chars")
+        return analysis
+    except Exception as e:
+        logger.error(f"Ollama generation failed, using fallback: {e}")
+        primary_sec = results[0].get('section_number', 'General') if results else 'General'
+        clean_excerpt = ' '.join(excerpt[:300].split())
+        return (
+            f"[EXECUTIVE_SUMMARY]\n"
+            f"This document has been submitted for legal analysis. Based on the extracted text parameters, "
+            f"the file addresses: {clean_excerpt}... "
+            f"The document contains legal provisions, corporate governance rules, or statutory requirements "
+            f"that require detailed professional review.\n\n"
+            f"[CLAUSE_DETECTION]\n"
+            f"- **Primary Legal Content:** The document contains provisions related to the submitted text. "
+            f"Specific clause or section identification requires full document review.\n"
+            f"- **Applicable Framework:** Relevant under Section {primary_sec} of the Companies Act, 2013 "
+            f"or associated corporate regulations.\n\n"
+            f"[RISK_ASSESSMENT]\n"
+            f"- **Non-Compliance Risk:** Failure to adhere to the provisions outlined may attract penalties, "
+            f"fines, or legal proceedings as prescribed under the applicable sections of the Companies Act, 2013.\n\n"
+            f"[CLAUSE_OBJECTIVES]\n"
+            f"The document establishes legal parameters, compliance obligations, or operational guidelines "
+            f"under Indian corporate law.\n\n"
+            f"[COMPLIANCE_STATUS]\n"
+            f"- **General Compliance:** Ensure adherence to statutory filing requirements, board governance, "
+            f"and record maintenance as mandated by the Companies Act, 2013. Please ensure the Ollama service "
+            f"is running for AI-powered analysis."
+        )
 
 
 @rag_router.post("/search", response_model=List[dict])
