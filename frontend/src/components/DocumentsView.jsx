@@ -104,27 +104,16 @@ function parseAnalysis(raw) {
     .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
     .filter(l => l.length > 0)
 
-  // 3. Risks (stops before CLAUSE_OBJECTIVES)
+  // 3. Risks (ULTRA-SIMPLE: no bullet filtering at all)
   const riskText = getSection('RISK_ASSESSMENT', ['CLAUSE_OBJECTIVES', 'COMPLIANCE_STATUS'])
 
-  // First try bullet points
-  result.risks = riskText
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.startsWith('-') || l.startsWith('*') || /^\d+[.)]/.test(l))
-    .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
-    .filter(l => l.length > 0)
-
-  // If no bullets but text exists, split by newlines and keep real sentences
-  if (result.risks.length === 0 && riskText.length > 10) {
-    result.risks = riskText
+  if (riskText.length > 0) {
+    const lines = riskText
       .split('\n')
       .map(l => l.trim())
-      .filter(l => l.length > 10 && !l.startsWith('['))  // ignore stray headers
-  }
-
-  // Final fallback
-  if (result.risks.length === 0) {
+      .filter(l => l.length > 0 && !l.match(/^\[.*\]$/))  // just remove empty lines & stray tags
+    result.risks = lines.length > 0 ? lines : [riskText]
+  } else {
     result.risks = ['Review the identified clauses for potential operational and legal risks.']
   }
 
