@@ -49,7 +49,7 @@ const TAB_TITLES = {
 }
 
 /* ─────────────────────────────────────────
-   PARSER  (Fixed regex escaping + smart risk)
+   PARSER  (Tag-based + heuristic fallback)
    ───────────────────────────────────────── */
 function parseAnalysis(raw) {
   if (!raw || typeof raw !== 'string') return null
@@ -78,6 +78,8 @@ function parseAnalysis(raw) {
       .filter(l => l.startsWith('-') || l.startsWith('*') || /^\d+[.)]/.test(l))
       .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
       .filter(l => l.length > 10)
+    // Heuristic: scan for risk sentences
+    result.risks = extractRiskLines(cleanText)
     return result
   }
 
@@ -92,11 +94,20 @@ function parseAnalysis(raw) {
     return m ? m[1].trim() : ''
   }
 
+  // Helper: try multiple tag names and return the first match that has content
+  const getSectionAny = (tagNames, nextTagNames = []) => {
+    for (const tagName of tagNames) {
+      const text = getSection(tagName, nextTagNames)
+      if (text.length > 0) return text
+    }
+    return ''
+  }
+
   // 1. Summary
   result.summary = getSection('EXECUTIVE_SUMMARY', ['CLAUSE_DETECTION'])
 
   // 2. Clauses (stops before RISK_ASSESSMENT)
-  const clauseText = getSection('CLAUSE_DETECTION', ['RISK_ASSESSMENT', 'CLAUSE_OBJECTIVES'])
+  const clauseText = getSection('CLAUSE_DETECTION', ['RISK_ASSESSMENT', 'CLAUSE_OBJECTIVES', 'RISKS', 'RISK'])
   result.clauses = clauseText
     .split('\n')
     .map(l => l.trim())
@@ -104,17 +115,21 @@ function parseAnalysis(raw) {
     .map(l => l.replace(/^[-*\d.)\s]+/, '').trim())
     .filter(l => l.length > 0)
 
-  // 3. Risks (ULTRA-SIMPLE: no bullet filtering at all)
-  const riskText = getSection('RISK_ASSESSMENT', ['CLAUSE_OBJECTIVES', 'COMPLIANCE_STATUS'])
+  // 3. Risks (tag-based + heuristic fallback)
+  let riskText = getSectionAny(
+    ['RISK_ASSESSMENT', 'RISK ASSESSMENT', 'RISKS', 'RISK'],
+    ['CLAUSE_OBJECTIVES', 'COMPLIANCE_STATUS', 'OBJECTIVES']
+  )
 
   if (riskText.length > 0) {
     const lines = riskText
       .split('\n')
       .map(l => l.trim())
-      .filter(l => l.length > 0 && !l.match(/^\[.*\]$/))  // just remove empty lines & stray tags
+      .filter(l => l.length > 0 && !l.match(/^\[.*\]$/))  // remove empty lines & stray tags
     result.risks = lines.length > 0 ? lines : [riskText]
   } else {
-    result.risks = ['Review the identified clauses for potential operational and legal risks.']
+    // HEURISTIC FALLBACK: scan entire raw text for risk-related sentences
+    result.risks = extractRiskLines(raw)
   }
 
   // 4. Objectives (stops before COMPLIANCE_STATUS)
@@ -125,6 +140,28 @@ function parseAnalysis(raw) {
   result.compliance = getSection('COMPLIANCE_STATUS', [])
 
   return result
+}
+
+// Heuristic risk extractor: finds lines/paragraphs that smell like risks
+function extractRiskLines(text) {
+  const riskKeywords = [
+    'risk', 'penalty', 'fine', 'imprisonment', 'liability', 'non-compliance',
+    'non compliance', 'breach', 'violation', 'consequence', 'sanction',
+    'disqualification', 'legal action', 'proceeding', 'punishment', 'forfeiture'
+  ]
+  const lines = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 15 && !l.match(/^\[.*\]$/)) // ignore tags & very short lines
+
+  const riskLines = lines.filter(line => {
+    const lower = line.toLowerCase()
+    return riskKeywords.some(kw => lower.includes(kw))
+  })
+
+  return riskLines.length > 0
+    ? riskLines
+    : ['Review the identified clauses for potential operational and legal risks.']
 }
 
 function normalizeSummary(res) {
