@@ -1,7 +1,40 @@
-﻿uploads/
-logs/
+﻿# Logs
+logs
 *.log
-__pycache__/
-node_modules/
-dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local.env
+.docker
+*.env
+venv
 .env
+uploads
+output/
+docker*
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# Password reset/verify scripts (contain hardcoded credentials)
+backend/reset_pw.py
+backend/reset_admin_pw.py
+backend/verify_pw.py
+backend/verify_admin_pw.py
+backend/verify_both.py
+backend/check_user.py
+backend/fix_both.py
+backend/make_admin.py
+backend/fix_admin.py
